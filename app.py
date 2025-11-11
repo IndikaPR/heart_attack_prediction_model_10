@@ -95,65 +95,75 @@ def load_model_and_preprocessors():
         scaler = joblib.load('scaler.pkl')
         label_encoders = joblib.load('label_encoders.pkl')
         target_encoder = joblib.load('target_encoder.pkl')
-        feature_order = joblib.load('feature_order.pkl')
+        feature_order_info = joblib.load('feature_order.pkl')
         
         st.success("✅ Model loaded successfully!")
-        return model, scaler, label_encoders, target_encoder, feature_order
+        return model, scaler, label_encoders, target_encoder, feature_order_info
         
     except Exception as e:
         st.error(f"❌ Error loading model: {e}")
         return None, None, None, None, None
 
-def predict_heart_attack(patient_data, model, scaler, label_encoders, target_encoder, feature_order):
+def predict_heart_attack(patient_data, model, scaler, label_encoders, target_encoder, feature_order_info):
     """Make prediction using the trained model with exact column order"""
     try:
-        # Create DataFrame from patient data
-        patient_df = pd.DataFrame([patient_data])
+        # Get the exact feature order from training
+        all_feature_columns = feature_order_info['all_feature_columns']
+        categorical_columns = feature_order_info['categorical_columns']
+        numerical_columns = feature_order_info['numerical_columns']
         
-        # Preprocess the data
+        # Create a dictionary to store processed data
         processed_data = {}
         
-        # Handle blood pressure first to create Systolic_BP and Diastolic_BP
-        if 'Blood Pressure (systolic/diastolic mmHg)' in patient_df.columns:
-            bp = str(patient_df['Blood Pressure (systolic/diastolic mmHg)'].iloc[0])
+        # Step 1: Extract blood pressure values first
+        if 'Blood Pressure (systolic/diastolic mmHg)' in patient_data:
+            bp = str(patient_data['Blood Pressure (systolic/diastolic mmHg)'])
             systolic, diastolic = bp.split('/')
             processed_data['Systolic_BP'] = float(systolic)
             processed_data['Diastolic_BP'] = float(diastolic)
         
-        # Process all features in EXACT order from training
-        all_feature_columns = feature_order['all_feature_columns']
-        
+        # Step 2: Process ALL features in the EXACT same order as training
         for col in all_feature_columns:
-            if col in patient_df.columns:
-                # Numerical column
-                if col in feature_order['numerical_columns']:
-                    processed_data[col] = float(patient_df[col].iloc[0])
-                # Categorical column - need to encode
-                elif col in feature_order['categorical_columns']:
-                    value = str(patient_df[col].iloc[0])
+            if col in patient_data:
+                # This column was provided by user
+                if col in numerical_columns:
+                    # Numerical column - convert to float
+                    processed_data[col] = float(patient_data[col])
+                elif col in categorical_columns:
+                    # Categorical column - encode it
+                    value = str(patient_data[col])
                     le = label_encoders[col]
                     if value in le.classes_:
                         processed_data[col] = le.transform([value])[0]
                     else:
+                        # Use first category as default for unknown values
                         processed_data[col] = le.transform([le.classes_[0]])[0]
             else:
-                # Column not provided, use default
-                if col in feature_order['numerical_columns']:
+                # Column not provided - use default value
+                if col in numerical_columns:
                     processed_data[col] = 0.0
                 else:
                     processed_data[col] = 0
         
-        # Create final DataFrame with EXACT same column order as training
+        # Step 3: Create DataFrame with EXACT same column order and names as training
         final_df = pd.DataFrame([processed_data])
-        final_df = final_df[all_feature_columns]  # Ensure exact order
         
-        # Scale and predict
+        # Ensure the DataFrame has the exact same columns in the exact same order
+        final_df = final_df.reindex(columns=all_feature_columns, fill_value=0)
+        
+        # Debug: Show the final DataFrame structure
+        st.write("🔍 Debug: Final DataFrame columns:", final_df.columns.tolist())
+        st.write("🔍 Debug: Final DataFrame shape:", final_df.shape)
+        
+        # Step 4: Scale the features
         scaled_data = scaler.transform(final_df)
+        
+        # Step 5: Make prediction
         probability = model.predict(scaled_data, verbose=0)[0][0]
         prediction = (probability > 0.5).astype(int)
         predicted_label = target_encoder.inverse_transform([prediction])[0]
         
-        # Determine risk level
+        # Step 6: Determine risk level
         if probability > 0.7:
             risk_level = "HIGH"
         elif probability > 0.4:
@@ -164,9 +174,7 @@ def predict_heart_attack(patient_data, model, scaler, label_encoders, target_enc
         return probability, predicted_label, risk_level
         
     except Exception as e:
-        st.error(f"Prediction error: {e}")
-        import traceback
-        st.error(f"Detailed error: {traceback.format_exc()}")
+        st.error(f"❌ Prediction error: {str(e)}")
         return None, None, None
 
 def main():
@@ -192,7 +200,7 @@ def main():
         """)
     
     # Load model
-    model, scaler, label_encoders, target_encoder, feature_order = load_model_and_preprocessors()
+    model, scaler, label_encoders, target_encoder, feature_order_info = load_model_and_preprocessors()
     
     if model is None:
         return
@@ -209,7 +217,7 @@ def main():
             
             with col1a:
                 st.markdown("#### 👤 Personal Information")
-                age = st.slider("Age", 18, 80, 35)
+                age = st.number_input("Age", min_value=18, max_value=80, value=35)
                 gender = st.selectbox("Gender", ["Male", "Female"])
                 region = st.selectbox("Region", ["North", "South", "East", "West"])
                 urban_rural = st.selectbox("Urban/Rural", ["Urban", "Rural"])
@@ -220,8 +228,8 @@ def main():
                 alcohol = st.selectbox("Alcohol Consumption", ["Never", "Occasionally", "Regularly"])
                 diet = st.selectbox("Diet Type", ["Vegetarian", "Non-Vegetarian", "Vegan"])
                 activity = st.selectbox("Physical Activity Level", ["Sedentary", "Moderate", "High"])
-                screen_time = st.slider("Screen Time (hours/day)", 0, 16, 6)
-                sleep = st.slider("Sleep Duration (hours/day)", 3, 12, 7)
+                screen_time = st.number_input("Screen Time (hours/day)", min_value=0, max_value=16, value=6)
+                sleep = st.number_input("Sleep Duration (hours/day)", min_value=3, max_value=12, value=7)
             
             with col1b:
                 st.markdown("#### 🩺 Medical History")
@@ -230,24 +238,24 @@ def main():
                 hypertension = st.selectbox("Hypertension", ["No", "Yes"])
                 
                 st.markdown("#### 📊 Clinical Measurements")
-                cholesterol = st.slider("Cholesterol Levels (mg/dL)", 100, 400, 200)
-                bmi = st.slider("BMI (kg/m²)", 15.0, 40.0, 25.0)
+                cholesterol = st.number_input("Cholesterol Levels (mg/dL)", min_value=100, max_value=400, value=200)
+                bmi = st.number_input("BMI (kg/m²)", min_value=15.0, max_value=40.0, value=25.0)
                 stress = st.selectbox("Stress Level", ["Low", "Medium", "High"])
                 
                 st.markdown("**Blood Pressure**")
                 bp_col1, bp_col2 = st.columns(2)
                 with bp_col1:
-                    systolic = st.slider("Systolic BP", 90, 200, 120)
+                    systolic = st.number_input("Systolic BP", min_value=90, max_value=200, value=120)
                 with bp_col2:
-                    diastolic = st.slider("Diastolic BP", 60, 120, 80)
+                    diastolic = st.number_input("Diastolic BP", min_value=60, max_value=120, value=80)
                 
-                heart_rate = st.slider("Resting Heart Rate (bpm)", 50, 120, 72)
+                heart_rate = st.number_input("Resting Heart Rate (bpm)", min_value=50, max_value=120, value=72)
                 ecg = st.selectbox("ECG Results", ["Normal", "Abnormal"])
                 chest_pain = st.selectbox("Chest Pain Type", ["Non-anginal", "Atypical", "Typical"])
-                max_heart_rate = st.slider("Maximum Heart Rate Achieved", 100, 220, 180)
+                max_heart_rate = st.number_input("Maximum Heart Rate Achieved", min_value=100, max_value=220, value=180)
                 exercise_angina = st.selectbox("Exercise Induced Angina", ["No", "Yes"])
-                blood_oxygen = st.slider("Blood Oxygen Levels (SpO2%)", 85.0, 100.0, 97.0)
-                triglycerides = st.slider("Triglyceride Levels (mg/dL)", 50, 500, 150)
+                blood_oxygen = st.number_input("Blood Oxygen Levels (SpO2%)", min_value=85.0, max_value=100.0, value=97.0)
+                triglycerides = st.number_input("Triglyceride Levels (mg/dL)", min_value=50, max_value=500, value=150)
             
             # Submit button
             submitted = st.form_submit_button("🔍 Predict Heart Attack Risk", use_container_width=True)
@@ -256,7 +264,7 @@ def main():
         st.markdown('<div class="sub-header">🎯 Risk Assessment</div>', unsafe_allow_html=True)
         
         if submitted:
-            # Prepare patient data
+            # Prepare patient data dictionary
             patient_data = {
                 'Age': age,
                 'Gender': gender,
@@ -288,7 +296,7 @@ def main():
             # Make prediction
             with st.spinner('🔬 Analyzing patient data...'):
                 probability, prediction, risk_level = predict_heart_attack(
-                    patient_data, model, scaler, label_encoders, target_encoder, feature_order
+                    patient_data, model, scaler, label_encoders, target_encoder, feature_order_info
                 )
             
             if probability is not None:
@@ -304,67 +312,19 @@ def main():
                 # Risk level display
                 if risk_level == "HIGH":
                     st.markdown(f'<div class="risk-high">🚨 HIGH RISK</div>', unsafe_allow_html=True)
-                    st.markdown(f"**Prediction:** {prediction}")
                 elif risk_level == "MEDIUM":
                     st.markdown(f'<div class="risk-medium">⚠️ MEDIUM RISK</div>', unsafe_allow_html=True)
-                    st.markdown(f"**Prediction:** {prediction}")
                 else:
                     st.markdown(f'<div class="risk-low">✅ LOW RISK</div>', unsafe_allow_html=True)
-                    st.markdown(f"**Prediction:** {prediction}")
                 
+                st.markdown(f"**Prediction:** {prediction}")
                 st.markdown('</div>', unsafe_allow_html=True)
                 
-                # Risk factors analysis
-                st.markdown("#### 🔍 Identified Risk Factors")
-                risk_factors = []
+                # Display success message
+                st.success("✅ Prediction completed successfully!")
                 
-                if age > 45: risk_factors.append(f"Age ({age} years)")
-                if family_history == "Yes": risk_factors.append("Family history of heart disease")
-                if diabetes == "Yes": risk_factors.append("Diabetes")
-                if hypertension == "Yes": risk_factors.append("Hypertension")
-                if cholesterol > 200: risk_factors.append(f"High cholesterol ({cholesterol} mg/dL)")
-                if bmi > 30: risk_factors.append(f"High BMI ({bmi})")
-                if smoking == "Regularly": risk_factors.append("Regular smoking")
-                if stress == "High": risk_factors.append("High stress level")
-                if systolic > 140 or diastolic > 90: risk_factors.append("High blood pressure")
-                if ecg == "Abnormal": risk_factors.append("Abnormal ECG")
-                if exercise_angina == "Yes": risk_factors.append("Exercise induced angina")
-                
-                if risk_factors:
-                    for factor in risk_factors:
-                        st.write(f"• {factor}")
-                else:
-                    st.success("No major risk factors identified")
-                
-                # Recommendations
-                st.markdown("#### 💡 Medical Recommendations")
-                if risk_level == "HIGH":
-                    st.error("""
-                    🚨 **Immediate Action Required:**
-                    - Consult a cardiologist immediately
-                    - Consider emergency evaluation if experiencing symptoms
-                    - Monitor vital signs regularly
-                    - Avoid strenuous activities
-                    """)
-                elif risk_level == "MEDIUM":
-                    st.warning("""
-                    ⚠️ **Preventive Measures Recommended:**
-                    - Schedule a comprehensive cardiac screening
-                    - Adopt heart-healthy lifestyle changes
-                    - Regular follow-up with healthcare provider
-                    - Monitor blood pressure and cholesterol
-                    """)
-                else:
-                    st.success("""
-                    ✅ **Maintenance Recommended:**
-                    - Continue healthy lifestyle habits
-                    - Regular annual check-ups
-                    - Maintain balanced diet and exercise routine
-                    - Monitor risk factors periodically
-                    """)
-            
             else:
-                st.error("Failed to generate prediction. Please check the input data.")
+                st.error("❌ Failed to generate prediction. Please check the input data.")
         
         else:
             # Default state before submission
@@ -376,16 +336,6 @@ def main():
             
             The model analyzes **25+ medical and lifestyle factors** to provide accurate risk prediction.
             """)
-            
-            # Quick stats
-            st.markdown("#### 📈 Model Statistics")
-            col_stat1, col_stat2, col_stat3 = st.columns(3)
-            with col_stat1:
-                st.metric("Accuracy", "77.8%")
-            with col_stat2:
-                st.metric("Sensitivity", "100%")
-            with col_stat3:
-                st.metric("Specificity", "71.4%")
 
 if __name__ == "__main__":
     main()
