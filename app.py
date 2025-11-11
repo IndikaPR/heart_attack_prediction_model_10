@@ -69,22 +69,6 @@ st.markdown("""
         margin: 15px 0px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }
-    .feature-section {
-        background-color: white;
-        padding: 20px;
-        border-radius: 10px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        margin: 10px 0px;
-    }
-    .stButton button {
-        width: 100%;
-        background-color: #2e86ab;
-        color: white;
-        font-weight: bold;
-        font-size: 1.1rem;
-        padding: 12px;
-        border-radius: 8px;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -97,29 +81,31 @@ def load_model_and_preprocessors():
             'heart_attack_prediction_final_model.h5',
             'scaler.pkl', 
             'label_encoders.pkl',
-            'target_encoder.pkl'
+            'target_encoder.pkl',
+            'feature_order.pkl'
         ]
         
         missing_files = [f for f in required_files if not os.path.exists(f)]
         if missing_files:
             st.error(f"❌ Missing model files: {', '.join(missing_files)}")
             st.info("💡 Please run 'save_model_files.py' first to generate the model files.")
-            return None, None, None, None
+            return None, None, None, None, None
         
         model = keras.models.load_model('heart_attack_prediction_final_model.h5')
         scaler = joblib.load('scaler.pkl')
         label_encoders = joblib.load('label_encoders.pkl')
         target_encoder = joblib.load('target_encoder.pkl')
+        feature_order = joblib.load('feature_order.pkl')
         
         st.success("✅ Model loaded successfully!")
-        return model, scaler, label_encoders, target_encoder
+        return model, scaler, label_encoders, target_encoder, feature_order
         
     except Exception as e:
         st.error(f"❌ Error loading model: {e}")
-        return None, None, None, None
+        return None, None, None, None, None
 
-def predict_heart_attack(patient_data, model, scaler, label_encoders, target_encoder):
-    """Make prediction using the trained model"""
+def predict_heart_attack(patient_data, model, scaler, label_encoders, target_encoder, feature_order):
+    """Make prediction using the trained model with exact column order"""
     try:
         # Create DataFrame from patient data
         patient_df = pd.DataFrame([patient_data])
@@ -127,53 +113,39 @@ def predict_heart_attack(patient_data, model, scaler, label_encoders, target_enc
         # Preprocess the data
         processed_data = {}
         
-        # Numerical features
-        numerical_cols = ['Age', 'Screen Time (hrs/day)', 'Sleep Duration (hrs/day)',
-                         'Cholesterol Levels (mg/dL)', 'BMI (kg/m²)', 'Resting Heart Rate (bpm)',
-                         'Maximum Heart Rate Achieved', 'Blood Oxygen Levels (SpO2%)',
-                         'Triglyceride Levels (mg/dL)']
-        
-        for col in numerical_cols:
-            if col in patient_df.columns:
-                processed_data[col] = float(patient_df[col].iloc[0])
-            else:
-                processed_data[col] = 0.0
-        
-        # Blood pressure handling
+        # Handle blood pressure first to create Systolic_BP and Diastolic_BP
         if 'Blood Pressure (systolic/diastolic mmHg)' in patient_df.columns:
             bp = str(patient_df['Blood Pressure (systolic/diastolic mmHg)'].iloc[0])
             systolic, diastolic = bp.split('/')
             processed_data['Systolic_BP'] = float(systolic)
             processed_data['Diastolic_BP'] = float(diastolic)
         
-        # Categorical features encoding
-        categorical_columns = ['Gender', 'Region', 'Urban/Rural', 'SES', 'Smoking Status',
-                              'Alcohol Consumption', 'Diet Type', 'Physical Activity Level',
-                              'Family History of Heart Disease', 'Diabetes', 'Hypertension',
-                              'Stress Level', 'ECG Results', 'Chest Pain Type', 'Exercise Induced Angina']
+        # Process all features in EXACT order from training
+        all_feature_columns = feature_order['all_feature_columns']
         
-        for col in categorical_columns:
+        for col in all_feature_columns:
             if col in patient_df.columns:
-                value = str(patient_df[col].iloc[0])
-                le = label_encoders[col]
-                if value in le.classes_:
-                    processed_data[col] = le.transform([value])[0]
-                else:
-                    processed_data[col] = le.transform([le.classes_[0]])[0]
+                # Numerical column
+                if col in feature_order['numerical_columns']:
+                    processed_data[col] = float(patient_df[col].iloc[0])
+                # Categorical column - need to encode
+                elif col in feature_order['categorical_columns']:
+                    value = str(patient_df[col].iloc[0])
+                    le = label_encoders[col]
+                    if value in le.classes_:
+                        processed_data[col] = le.transform([value])[0]
+                    else:
+                        processed_data[col] = le.transform([le.classes_[0]])[0]
             else:
-                processed_data[col] = 0
+                # Column not provided, use default
+                if col in feature_order['numerical_columns']:
+                    processed_data[col] = 0.0
+                else:
+                    processed_data[col] = 0
         
-        # Create final DataFrame
-        expected_columns = list(label_encoders.keys()) + numerical_cols + ['Systolic_BP', 'Diastolic_BP']
+        # Create final DataFrame with EXACT same column order as training
         final_df = pd.DataFrame([processed_data])
-        
-        # Ensure all columns exist
-        for col in expected_columns:
-            if col not in final_df.columns:
-                final_df[col] = 0
-        
-        # Reorder columns to match training
-        final_df = final_df.reindex(columns=expected_columns, fill_value=0)
+        final_df = final_df[all_feature_columns]  # Ensure exact order
         
         # Scale and predict
         scaled_data = scaler.transform(final_df)
@@ -193,6 +165,8 @@ def predict_heart_attack(patient_data, model, scaler, label_encoders, target_enc
         
     except Exception as e:
         st.error(f"Prediction error: {e}")
+        import traceback
+        st.error(f"Detailed error: {traceback.format_exc()}")
         return None, None, None
 
 def main():
@@ -216,16 +190,9 @@ def main():
         This tool is for **educational purposes only**. 
         Always consult healthcare professionals for medical advice and diagnosis.
         """)
-        
-        st.markdown("### 📁 Required Files")
-        if all(os.path.exists(f) for f in ['heart_attack_prediction_final_model.h5', 'scaler.pkl', 'label_encoders.pkl', 'target_encoder.pkl']):
-            st.success("✅ All model files present")
-        else:
-            st.error("❌ Model files missing")
-            st.info("Run 'save_model_files.py' first")
     
     # Load model
-    model, scaler, label_encoders, target_encoder = load_model_and_preprocessors()
+    model, scaler, label_encoders, target_encoder, feature_order = load_model_and_preprocessors()
     
     if model is None:
         return
@@ -321,7 +288,7 @@ def main():
             # Make prediction
             with st.spinner('🔬 Analyzing patient data...'):
                 probability, prediction, risk_level = predict_heart_attack(
-                    patient_data, model, scaler, label_encoders, target_encoder
+                    patient_data, model, scaler, label_encoders, target_encoder, feature_order
                 )
             
             if probability is not None:
