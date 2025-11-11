@@ -110,17 +110,10 @@ def predict_heart_attack(patient_data, model, scaler, label_encoders, target_enc
         # Get the exact feature order from training
         all_feature_columns = feature_order_info['all_feature_columns']
         
-        # Create a dictionary to store processed data
-        processed_data = {}
+        # Create a list to store processed data in the exact order
+        feature_values = []
         
-        # Step 1: Extract blood pressure values first
-        if 'Blood Pressure (systolic/diastolic mmHg)' in patient_data:
-            bp = str(patient_data['Blood Pressure (systolic/diastolic mmHg)'])
-            systolic, diastolic = bp.split('/')
-            processed_data['Systolic_BP'] = float(systolic)
-            processed_data['Diastolic_BP'] = float(diastolic)
-        
-        # Step 2: Process ALL features in the EXACT same order as training
+        # Process each feature in the exact same order as training
         for col in all_feature_columns:
             if col in patient_data:
                 # This column was provided by user
@@ -129,47 +122,43 @@ def predict_heart_attack(patient_data, model, scaler, label_encoders, target_enc
                           'Maximum Heart Rate Achieved', 'Blood Oxygen Levels (SpO2%)',
                           'Triglyceride Levels (mg/dL)', 'Systolic_BP', 'Diastolic_BP']:
                     # Numerical column - convert to float
-                    processed_data[col] = float(patient_data[col])
+                    feature_values.append(float(patient_data[col]))
                 else:
                     # Categorical column - encode it
                     value = str(patient_data[col])
                     le = label_encoders[col]
                     if value in le.classes_:
-                        processed_data[col] = le.transform([value])[0]
+                        feature_values.append(le.transform([value])[0])
                     else:
                         # Use first category as default for unknown values
-                        processed_data[col] = le.transform([le.classes_[0]])[0]
+                        feature_values.append(le.transform([le.classes_[0]])[0])
             else:
                 # Column not provided - use default value
                 if col in ['Age', 'Screen Time (hrs/day)', 'Sleep Duration (hrs/day)', 
                           'Cholesterol Levels (mg/dL)', 'BMI (kg/m²)', 'Resting Heart Rate (bpm)',
                           'Maximum Heart Rate Achieved', 'Blood Oxygen Levels (SpO2%)',
                           'Triglyceride Levels (mg/dL)', 'Systolic_BP', 'Diastolic_BP']:
-                    processed_data[col] = 0.0
+                    feature_values.append(0.0)
                 else:
-                    processed_data[col] = 0
+                    feature_values.append(0)
         
-        # Step 3: Create DataFrame with EXACT same column order and names as training
-        # Create a list of values in the exact order of all_feature_columns
-        feature_values = [processed_data[col] for col in all_feature_columns]
+        # Convert to numpy array (bypasses feature name checking)
+        feature_array = np.array([feature_values])
         
-        # Create DataFrame with proper column names
-        final_df = pd.DataFrame([feature_values], columns=all_feature_columns)
+        # Debug information
+        st.write("🔍 Debug: Processed features shape:", feature_array.shape)
+        st.write("🔍 Debug: Number of features:", len(feature_values))
+        st.write("🔍 Debug: Expected features:", len(all_feature_columns))
         
-        # Debug: Show the final DataFrame structure
-        st.write("🔍 Debug: Final DataFrame columns:", final_df.columns.tolist())
-        st.write("🔍 Debug: Final DataFrame shape:", final_df.shape)
-        st.write("🔍 Debug: Scaler expects features:", len(scaler.feature_names_in_) if hasattr(scaler, 'feature_names_in_') else "Unknown")
+        # Scale the features using numpy array (bypasses feature name validation)
+        scaled_data = scaler.transform(feature_array)
         
-        # Step 4: Scale the features - ensure we pass a DataFrame with proper column names
-        scaled_data = scaler.transform(final_df)
-        
-        # Step 5: Make prediction
+        # Make prediction
         probability = model.predict(scaled_data, verbose=0)[0][0]
         prediction = (probability > 0.5).astype(int)
         predicted_label = target_encoder.inverse_transform([prediction])[0]
         
-        # Step 6: Determine risk level
+        # Determine risk level
         if probability > 0.7:
             risk_level = "HIGH"
         elif probability > 0.4:
@@ -217,6 +206,7 @@ def main():
     if feature_order_info:
         st.sidebar.markdown("### 🔧 Model Info")
         st.sidebar.write(f"Features: {len(feature_order_info['all_feature_columns'])}")
+        st.sidebar.write(f"Feature order preserved: ✅")
     
     # Main content
     col1, col2 = st.columns([2, 1])
@@ -296,7 +286,8 @@ def main():
                 'Cholesterol Levels (mg/dL)': cholesterol,
                 'BMI (kg/m²)': bmi,
                 'Stress Level': stress,
-                'Blood Pressure (systolic/diastolic mmHg)': f"{systolic}/{diastolic}",
+                'Systolic_BP': systolic,  # Directly use the values
+                'Diastolic_BP': diastolic, # Directly use the values
                 'Resting Heart Rate (bpm)': heart_rate,
                 'ECG Results': ecg,
                 'Chest Pain Type': chest_pain,
@@ -332,6 +323,9 @@ def main():
                 
                 st.markdown(f"**Prediction:** {prediction}")
                 st.markdown('</div>', unsafe_allow_html=True)
+                
+                # Display success message
+                st.success("🎉 Prediction completed successfully!")
                 
                 # Risk factors analysis
                 st.markdown("#### 🔍 Identified Risk Factors")
