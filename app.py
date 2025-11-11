@@ -9,7 +9,7 @@ from tensorflow import keras
 import joblib
 
 st.set_page_config(page_title="Heart Attack Risk Predictor", layout="wide")
-st.title("❤️ Heart Attack Risk Predictor - OPTIMIZED")
+st.title("❤️ Heart Attack Risk Predictor")
 
 @st.cache_resource
 def create_optimized_model():
@@ -286,3 +286,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
