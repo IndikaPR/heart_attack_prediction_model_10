@@ -109,8 +109,6 @@ def predict_heart_attack(patient_data, model, scaler, label_encoders, target_enc
     try:
         # Get the exact feature order from training
         all_feature_columns = feature_order_info['all_feature_columns']
-        categorical_columns = feature_order_info['categorical_columns']
-        numerical_columns = feature_order_info['numerical_columns']
         
         # Create a dictionary to store processed data
         processed_data = {}
@@ -126,10 +124,13 @@ def predict_heart_attack(patient_data, model, scaler, label_encoders, target_enc
         for col in all_feature_columns:
             if col in patient_data:
                 # This column was provided by user
-                if col in numerical_columns:
+                if col in ['Age', 'Screen Time (hrs/day)', 'Sleep Duration (hrs/day)', 
+                          'Cholesterol Levels (mg/dL)', 'BMI (kg/m²)', 'Resting Heart Rate (bpm)',
+                          'Maximum Heart Rate Achieved', 'Blood Oxygen Levels (SpO2%)',
+                          'Triglyceride Levels (mg/dL)', 'Systolic_BP', 'Diastolic_BP']:
                     # Numerical column - convert to float
                     processed_data[col] = float(patient_data[col])
-                elif col in categorical_columns:
+                else:
                     # Categorical column - encode it
                     value = str(patient_data[col])
                     le = label_encoders[col]
@@ -140,22 +141,27 @@ def predict_heart_attack(patient_data, model, scaler, label_encoders, target_enc
                         processed_data[col] = le.transform([le.classes_[0]])[0]
             else:
                 # Column not provided - use default value
-                if col in numerical_columns:
+                if col in ['Age', 'Screen Time (hrs/day)', 'Sleep Duration (hrs/day)', 
+                          'Cholesterol Levels (mg/dL)', 'BMI (kg/m²)', 'Resting Heart Rate (bpm)',
+                          'Maximum Heart Rate Achieved', 'Blood Oxygen Levels (SpO2%)',
+                          'Triglyceride Levels (mg/dL)', 'Systolic_BP', 'Diastolic_BP']:
                     processed_data[col] = 0.0
                 else:
                     processed_data[col] = 0
         
         # Step 3: Create DataFrame with EXACT same column order and names as training
-        final_df = pd.DataFrame([processed_data])
+        # Create a list of values in the exact order of all_feature_columns
+        feature_values = [processed_data[col] for col in all_feature_columns]
         
-        # Ensure the DataFrame has the exact same columns in the exact same order
-        final_df = final_df.reindex(columns=all_feature_columns, fill_value=0)
+        # Create DataFrame with proper column names
+        final_df = pd.DataFrame([feature_values], columns=all_feature_columns)
         
         # Debug: Show the final DataFrame structure
         st.write("🔍 Debug: Final DataFrame columns:", final_df.columns.tolist())
         st.write("🔍 Debug: Final DataFrame shape:", final_df.shape)
+        st.write("🔍 Debug: Scaler expects features:", len(scaler.feature_names_in_) if hasattr(scaler, 'feature_names_in_') else "Unknown")
         
-        # Step 4: Scale the features
+        # Step 4: Scale the features - ensure we pass a DataFrame with proper column names
         scaled_data = scaler.transform(final_df)
         
         # Step 5: Make prediction
@@ -175,6 +181,8 @@ def predict_heart_attack(patient_data, model, scaler, label_encoders, target_enc
         
     except Exception as e:
         st.error(f"❌ Prediction error: {str(e)}")
+        import traceback
+        st.error(f"🔍 Detailed error: {traceback.format_exc()}")
         return None, None, None
 
 def main():
@@ -204,6 +212,11 @@ def main():
     
     if model is None:
         return
+    
+    # Show feature information for debugging
+    if feature_order_info:
+        st.sidebar.markdown("### 🔧 Model Info")
+        st.sidebar.write(f"Features: {len(feature_order_info['all_feature_columns'])}")
     
     # Main content
     col1, col2 = st.columns([2, 1])
@@ -320,8 +333,54 @@ def main():
                 st.markdown(f"**Prediction:** {prediction}")
                 st.markdown('</div>', unsafe_allow_html=True)
                 
-                # Display success message
-                st.success("✅ Prediction completed successfully!")
+                # Risk factors analysis
+                st.markdown("#### 🔍 Identified Risk Factors")
+                risk_factors = []
+                
+                if age > 45: risk_factors.append(f"Age ({age} years)")
+                if family_history == "Yes": risk_factors.append("Family history of heart disease")
+                if diabetes == "Yes": risk_factors.append("Diabetes")
+                if hypertension == "Yes": risk_factors.append("Hypertension")
+                if cholesterol > 200: risk_factors.append(f"High cholesterol ({cholesterol} mg/dL)")
+                if bmi > 30: risk_factors.append(f"High BMI ({bmi})")
+                if smoking == "Regularly": risk_factors.append("Regular smoking")
+                if stress == "High": risk_factors.append("High stress level")
+                if systolic > 140 or diastolic > 90: risk_factors.append("High blood pressure")
+                if ecg == "Abnormal": risk_factors.append("Abnormal ECG")
+                if exercise_angina == "Yes": risk_factors.append("Exercise induced angina")
+                
+                if risk_factors:
+                    for factor in risk_factors:
+                        st.write(f"• {factor}")
+                else:
+                    st.success("No major risk factors identified")
+                
+                # Recommendations
+                st.markdown("#### 💡 Medical Recommendations")
+                if risk_level == "HIGH":
+                    st.error("""
+                    🚨 **Immediate Action Required:**
+                    - Consult a cardiologist immediately
+                    - Consider emergency evaluation if experiencing symptoms
+                    - Monitor vital signs regularly
+                    - Avoid strenuous activities
+                    """)
+                elif risk_level == "MEDIUM":
+                    st.warning("""
+                    ⚠️ **Preventive Measures Recommended:**
+                    - Schedule a comprehensive cardiac screening
+                    - Adopt heart-healthy lifestyle changes
+                    - Regular follow-up with healthcare provider
+                    - Monitor blood pressure and cholesterol
+                    """)
+                else:
+                    st.success("""
+                    ✅ **Maintenance Recommended:**
+                    - Continue healthy lifestyle habits
+                    - Regular annual check-ups
+                    - Maintain balanced diet and exercise routine
+                    - Monitor risk factors periodically
+                    """)
                 
             else:
                 st.error("❌ Failed to generate prediction. Please check the input data.")
